@@ -1,0 +1,164 @@
+---
+title: "Practical ML - Course Peer Assignment"
+author: "Vidit Agarwal"
+date: "13th July, 2017"
+output:
+  md_document:
+    variant: markdown_github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## A. Overview
+    This report explores the relationship of how multiple metrics relate with different effectiveness level of an exercise performed.In its due emphasis is laid on identifying important variables and subsequently a machine learning model has been build to predict exercise effectiveness based on test sample.  
+    
+## B. Brief Background
+    There has been recent surge in monitoring devices which measures personal activity bases on reading of various sensors e.g. accerelometers, gyroscopes. Given complexity of various human movements, it entails measurement of each activity across multiple metrics. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+      In this project, we will be using data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants to see if we can help gauge whether a particular exercise i.e  barbell in this case, if being lifted correctly or incorrectly in 5 different ways
+      
+## C. Data Exploration
+
+### i. Dataset:
+Full data for this project is available at http://groupware.les.inf.puc-rio.br/har.  
+
+**Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. “Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human ’13)”. Stuttgart, Germany: ACM SIGCHI, 2013.**
+
+A special thanks to  authors of this data for allowing its usage for this academic assignment
+
+**The training data**    
+  **Link**: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+  
+**The test data**  
+  **Link** : https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+  
+### ii. Loading Data
+
+```{r}
+suppressPackageStartupMessages(library(caret))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(corrplot))
+
+url1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+filename1 <- "pml-training.csv"
+filename2 <- "pml-testing.csv"
+download.file(url=url1, destfile=filename1,method="curl")
+download.file(url=url2, destfile=filename2,method="curl")
+training_raw <- read.csv("pml-training.csv", sep = ",", header = TRUE, na.strings = c("", "NA"))
+testing_raw <- read.csv("pml-testing.csv", sep = ",", header = TRUE, na.strings =c("","NA"))
+```
+
+### iii. Stucture of data
+
+```{r}
+dim(training_raw)
+dim(testing_raw)
+```
+
+### iv. Cleaning of dataset
+
+*On checking variables in dataset, we see that test dataset have variable "problem_id" which is not present in train. lets see it content*
+```{r}
+unique(training_raw$classe)
+unique(testing_raw$problem_id)
+```
+
+*Clearly it is different from classe variable in training set. So, we have to remove it as we cannot predict based on new variable not defined in prediction model ( sourced through train dataset)*
+```{r}
+testing_raw <- testing_raw[ , -(which(names(testing_raw) == "problem_id"))]
+```
+
+Both data-sets have numerous variables i.e 160 variables. to check if we can trim, we will run 2 process.  
+1. Removing variables with less influence on result owing to very low variability in the measurements.  
+2. Removing variables with large number of NA variables.  
+```{r}
+# removing variables with very low variance
+nsv <- nearZeroVar(training_raw,saveMetrics=TRUE)
+zerovar <- names(training_raw[, nsv$nzv])
+
+training_v1 <- training_raw[,!nsv$nzv]
+testing_v1 <- testing_raw[, -which(names(testing_raw) %in% zerovar)]
+```
+
+
+```{r}
+#removing variables with large NAs
+na_filter    <- sapply(training_v1, function(x) mean(is.na(x))) > 0.95
+training_v2 <- training_v1[, na_filter==FALSE]
+testing_v2  <- testing_v1[, which(names(testing_v1) %in% names(training_v2))]
+sum(is.na(training_v2))
+```
+*Final values shows there are no more NA in trainingdata set*
+
+
+*We also observed that 1st 6 variables capture reduntant information from exercise point of view. We will remove them as well*
+```{r}
+training_v3 <- training_v2[,-(1:6)]
+testing_v3 <- testing_v2[, -(1:6)]
+dim(training_v3)
+```
+With the cleaning process above, the number of variables for the analysis has been reduced to 53 only.
+
+## D. Variable relationships
+Lets explore correlation among variables before proceeding further
+```{r, fig.height= 12, fig.width= 12, fig.align= "center"}
+corMatrix <- cor(training_v3[, -ncol(training_v3)])
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+Since correlations are quite few in nature, we could avoid PCA preprocessing and directly explore modelling  
+
+## D. Model Building:
+
+Though random forest method will most probably yield better result,  for better confidence in our model we will try to check accuracy for other model methods as well. But first lets split training-set it into  
+1. training subset  
+2. validation subset  
+
+```{r}
+inTrain <- createDataPartition(y=training_v3$classe, p=0.7, list=FALSE)
+training_clean <- training_v3[inTrain,]
+validation_clean <- training_v3[-inTrain,]
+```
+
+**Method 1**: **Random forest**
+```{r}
+set.seed(123)
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modelRF <- train(classe ~ ., data=training_clean, method="rf",trControl=controlRF, message = FALSE)
+validation_pred_RF <- predict(modelRF, newdata = validation_clean)
+confusionMatrix(validation_pred_RF,validation_clean$classe)
+```
+Accuracy =  **99.3%**.  
+Lets check the accuracy through another method
+
+**Method 1**: **General boosting method**
+```{r}
+controlGBM <- trainControl(method="repeatedcv", number=5, repeats = 1)
+modelGBM <- train(classe ~ ., data=training_clean, method="gbm",trControl=controlGBM, verbose = FALSE)
+validation_pred_GBM <- predict(modelGBM, newdata = validation_clean)
+confusionMatrix(validation_pred_GBM,validation_clean$classe)
+```
+Accuracy = **96.3%**.  
+*Random forest* model looks to be a better model with a very low out-of-sample error is **0.7%**. 
+Also, we don’t need to worry about variables we excluded with this accuracy.
+
+
+
+** Performing check on importance of variables ** 
+```{r, fig.height= 8,fig.align= "center"}
+varImpPlot(modelRF$finalModel, sort = TRUE, pch = 19, col = 1, cex = 1, main = "Importance of Predictors")
+```
+The top 4 most important variables according to the model fit are ‘roll_belt’, ‘pitch_forearm’, ‘yaw_belt’ and ‘roll_forearm’
+
+## E. Predicting on test sample :
+
+```{r}
+test_pred<- predict( modelRF, newdata= testing_v3)
+test_pred
+```
+
+
+## Results
+We used 52 variables to build the random forest model with 3-fold cross validation.   
+The out-of-sample error is approximately **0.7%**
